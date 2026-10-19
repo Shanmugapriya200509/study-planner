@@ -13,7 +13,8 @@ import streamlit as st
 # Tried in this order. You can force a model by adding GEMINI_MODEL = "..." to Secrets.
 DEFAULT_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"]
 ATTEMPTS_PER_MODEL = 2      # one retry when the server is temporarily busy
-MAX_OUTPUT_TOKENS = 8192    # long explanations / quizzes must not be cut off
+MAX_OUTPUT_TOKENS = 8192    # long explanations and quizzes must not be cut off
+FENCE = chr(96) * 3         # three backtick characters (markdown code fence)
 
 
 class AIError(Exception):
@@ -138,9 +139,43 @@ def generate_text(prompt, system=None, temperature=0.5, json_mode=False):
 
 
 def parse_json(text):
-    """Parse JSON from a model reply. Tolerates ```json fences, raw line breaks inside
+    """Parse JSON from a model reply. Tolerates markdown fences, raw line breaks inside
     strings, and extra words before or after the JSON. Raises json.JSONDecodeError."""
     cleaned = text.strip()
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = re.sub("^" + FENCE + r"(?:json)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*" + FENCE + "$", "", cleaned)
     try:
+        return json.loads(cleaned, strict=False)
+    except json.JSONDecodeError:
+        pass
+    # Fallback: take the outermost {...} or [...] block
+    for open_c, close_c in (("{", "}"), ("[", "]")):
+        start, end = cleaned.find(open_c), cleaned.rfind(close_c)
+        if start != -1 and end > start:
+            try:
+                return json.loads(cleaned[start:end + 1], strict=False)
+            except json.JSONDecodeError:
+                continue
+    raise json.JSONDecodeError("No valid JSON found", cleaned, 0)
+
+
+def generate_json(prompt, system=None, temperature=0.4):
+    """Returns parsed JSON (dict or list). Asks again once if the reply is unreadable.
+    Raises AIError if it still fails."""
+    for _attempt in range(2):
+        text, _model = generate_text(prompt, system, temperature, json_mode=True)
+        try:
+            return parse_json(text)
+        except json.JSONDecodeError:
+            continue
+    raise AIError("The AI returned an invalid JSON response twice. Please try again.")
+
+
+def list_models():
+    """Names of Gemini models this API key can see (for troubleshooting)."""
+    client = _client()
+    try:
+        names = [m.name.replace("models/", "") for m in client.models.list()]
+    except Exception as e:          # noqa: BLE001
+        raise AIError(_friendly(str(e)))
+    return sorted(n for n in names if n.startswith("gemini"))
