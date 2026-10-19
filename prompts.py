@@ -137,3 +137,60 @@ OUTPUT FORMAT (JSON object only):
     "correct_index": 0, "explanation": "why it is correct"}}
 ]}}
 """
+
+# ================================================================ adaptive plan
+ADAPT_SYSTEM = (
+    "You are a careful study-planning assistant for college students. "
+    "You adapt an existing study plan to new evidence (quiz results and missed sessions). "
+    "You reply with one valid JSON object only: no commentary and no markdown fences. "
+    "You never invent numbers or facts that are not in the data you are given."
+)
+
+
+def build_adapt_prompt(ctx):
+    """ctx: made by adaptive.adapt_plan (constraints, unfinished topics, quizzes, missed sessions)."""
+    topics_json = json.dumps(ctx["topics"], ensure_ascii=False, separators=(",", ":"))
+    quizzes_json = json.dumps(ctx["quizzes"], ensure_ascii=False, separators=(",", ":"))
+    return f"""Adapt a student's study plan using new evidence.
+
+STUDENT CONSTRAINTS
+- Today: {ctx['today']}. Deadline: {ctx['target']}.
+- Study days available: {ctx['days']}. Minutes per study day: {ctx['minutes_per_day']}.
+- Total minutes available: {ctx['capacity']}.
+- The sum of ALL item minutes MUST NOT exceed {ctx['limit']}.
+
+WHAT HAPPENED SINCE THE LAST PLAN
+- New quiz results (JSON): {quizzes_json}
+- Missed sessions: {ctx['missed_total']}
+- Summary of the previous plan: {ctx['previous_summary']}
+
+TOPICS STILL TO STUDY (JSON)
+{topics_json}
+Field meanings: subject_priority 1 = high priority subject, 2 = normal.
+performance is the level from quizzes: Strong (75% or more), Moderate (50 to 74%),
+Weak (below 50%) or Untested. last_quiz_pct may be null.
+missed_sessions = number of planned sessions of this topic that were missed.
+
+ADAPTATION RULES
+1. Weak topics have the highest priority: schedule their Study early, make Study up to 25%
+   longer, and add a Revision item (30 to 45 minutes) soon after.
+2. Moderate topics get one short Revision item (20 to 30 minutes).
+3. Strong topics get NO Revision item and a Study item about 30% shorter (minimum 15 minutes).
+   Use the time saved to move on to unfinished topics.
+4. Topics with missed_sessions above 0 are scheduled before untouched topics of the same priority.
+5. Untested Hard topics get a Revision item; other Untested topics follow the normal plan.
+6. Every topic gets exactly one Study item. After the last topic of each unit add one Test item
+   (15 to 30 minutes) using the topic_id of the hardest topic of that unit.
+7. If time is short, drop Revision and Test items first, then shorten Study items.
+8. Use only topic_id values from the list above. Minutes are multiples of 5, between 15 and 120.
+9. List items in the exact order the student should do them.
+10. "summary" must be 3 to 4 sentences that explain what changed and why, naming topics from the
+    data (more time for weak topics, less for strong ones, missed sessions if any).
+    Do not invent scores or numbers.
+
+OUTPUT FORMAT (JSON object only):
+{{"summary": "3 to 4 sentences",
+  "items": [
+    {{"topic_id": 1, "session_type": "Study", "minutes": 60, "reason": "at most 10 words"}}
+  ]}}
+"""
