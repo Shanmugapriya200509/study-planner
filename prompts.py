@@ -91,3 +91,49 @@ OUTPUT FORMAT (JSON object only, all fields required):
   "summary": "2 to 3 sentences",
   "exam_questions": ["a likely exam question", "... exactly 4 items, a mix of short and long answer"]}}
 """
+
+
+# ================================================================ quiz
+QUIZ_SYSTEM = (
+    "You are an exam-question writer for college students. "
+    "You reply with one valid JSON object only: no commentary and no markdown fences. "
+    "You never invent facts. Every question must have exactly one clearly correct option."
+)
+
+QUIZ_LEVEL = {
+    "Beginner": "Test definitions and basic ideas in simple wording.",
+    "Intermediate": "Test understanding and application in short scenarios.",
+    "Advanced": "Test multi-step reasoning, calculations and tricky distinctions.",
+}
+
+
+def build_quiz_prompt(ctx, n, level):
+    """ctx: subject, unit, topic, performance."""
+    weak_note = ""
+    if ctx.get("performance") == "Weak":
+        weak_note = ("\nThe student scored poorly on this topic earlier, so include "
+                     "questions on the fundamental ideas first.")
+    return f"""Write a multiple-choice quiz.
+
+Subject: {ctx['subject']}
+Unit: {ctx['unit']}
+Topic: {ctx['topic']}
+Difficulty: {level}. {QUIZ_LEVEL.get(level, '')}{weak_note}
+Number of questions: exactly {n}.
+
+RULES
+1. Each question has exactly four options and exactly one correct option.
+   Never use "all of the above" or "none of the above".
+2. Wrong options must be plausible but clearly wrong for someone who understands the topic.
+3. Test understanding, not trivia. Stay strictly on this topic.
+4. No duplicate questions. Vary which option is correct.
+5. Do not put letters such as "A)" in front of the options.
+6. "explanation" is one or two sentences saying why the correct option is right.
+7. "correct_index" is the position of the correct option: 0, 1, 2 or 3.
+
+OUTPUT FORMAT (JSON object only):
+{{"questions": [
+  {{"question": "question text", "options": ["option 1", "option 2", "option 3", "option 4"],
+    "correct_index": 0, "explanation": "why it is correct"}}
+]}}
+"""
