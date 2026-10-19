@@ -4,6 +4,7 @@ Keeping them here means the wording can be changed without touching the app logi
 """
 import json
 
+# ================================================================ study plan
 PLAN_SYSTEM = (
     "You are a careful study-planning assistant for college students. "
     "You reply with one valid JSON object only: no commentary and no markdown fences. "
@@ -46,4 +47,47 @@ OUTPUT FORMAT (JSON object only):
   "items": [
     {{"topic_id": 1, "session_type": "Study", "minutes": 60, "reason": "at most 10 words"}}
   ]}}
+"""
+
+
+# ================================================================ topic explanation
+EXPLAIN_SYSTEM = (
+    "You are a patient, accurate tutor for college students. "
+    "You reply with one valid JSON object only: no commentary and no markdown fences. "
+    "You never invent facts, statistics, references or quotations. "
+    "If you are unsure about a detail, leave it out instead of guessing."
+)
+
+LEVEL_GUIDE = {
+    "Beginner": ("Use very simple words and everyday analogies. Assume no prior knowledge "
+                 "and define every technical term the first time it appears."),
+    "Intermediate": ("Assume the student knows the basics of the subject. Be precise and "
+                     "explain how and why things work."),
+    "Advanced": ("Be rigorous and detailed. Include edge cases, trade-offs, limitations and "
+                 "common exam traps."),
+}
+
+
+def build_explain_prompt(ctx, level):
+    """ctx: subject, unit, topic, difficulty, performance."""
+    weak_note = ""
+    if ctx.get("performance") == "Weak":
+        weak_note = ("\nThe student scored poorly on this topic in an earlier quiz, so point out "
+                     "the most common misunderstandings and correct them gently.")
+    return f"""Explain one syllabus topic to a student.
+
+Subject: {ctx['subject']}
+Unit: {ctx['unit']}
+Topic: {ctx['topic']}
+Explanation level: {level}. {LEVEL_GUIDE.get(level, '')}{weak_note}
+
+Stay strictly on this topic, within the subject above.
+
+OUTPUT FORMAT (JSON object only, all fields required):
+{{"simple_explanation": "a clear explanation in 2 to 4 short paragraphs",
+  "key_concepts": ["Term: one-sentence meaning", "... 4 to 6 items"],
+  "important_points": ["a point to remember", "... 4 to 6 items"],
+  "example": "one concrete worked example or scenario, easy to follow",
+  "summary": "2 to 3 sentences",
+  "exam_questions": ["a likely exam question", "... exactly 4 items, a mix of short and long answer"]}}
 """
