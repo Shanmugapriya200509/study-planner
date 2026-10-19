@@ -10,6 +10,7 @@ import planner
 import progress as prog
 import quiz
 import syllabus
+import adaptive
 
 st.set_page_config(page_title="AI Study Planner", page_icon="📚", layout="wide")
 db.init_db()
@@ -180,7 +181,7 @@ def main():
     st.sidebar.write(f"Signed in as **{user['name']}**")
     page = st.sidebar.radio(
         "Navigate",
-        ["Dashboard", "Syllabus", "Study Goal", "Study Plan",
+        ["Dashboard", "Syllabus", "Study Goal", "Study Plan", "Adaptive Plan",
          "Learn a Topic", "Quiz", "Profile", "AI Test"],
     )
     if st.sidebar.button("Logout"):
@@ -197,6 +198,8 @@ def main():
         planner.render_goal(user)
     elif page == "Study Plan":
         planner.render_plan(user)
+    elif page == "Adaptive Plan":
+        adaptive.render(user)
     elif page == "Learn a Topic":
         learn.render(user)
     elif page == "Quiz":
