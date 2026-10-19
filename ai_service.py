@@ -13,6 +13,7 @@ import streamlit as st
 # Tried in this order. You can force a model by adding GEMINI_MODEL = "..." to Secrets.
 DEFAULT_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"]
 ATTEMPTS_PER_MODEL = 2      # one retry when the server is temporarily busy
+MAX_OUTPUT_TOKENS = 8192    # long explanations / quizzes must not be cut off
 
 
 class AIError(Exception):
@@ -104,6 +105,7 @@ def generate_text(prompt, system=None, temperature=0.5, json_mode=False):
     config = types.GenerateContentConfig(
         system_instruction=system,
         temperature=temperature,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
         response_mime_type="application/json" if json_mode else None,
     )
 
@@ -136,27 +138,9 @@ def generate_text(prompt, system=None, temperature=0.5, json_mode=False):
 
 
 def parse_json(text):
-    """Parse JSON from a model reply, tolerating ```json fences."""
+    """Parse JSON from a model reply. Tolerates ```json fences, raw line breaks inside
+    strings, and extra words before or after the JSON. Raises json.JSONDecodeError."""
     cleaned = text.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
     cleaned = re.sub(r"\s*```$", "", cleaned)
-    return json.loads(cleaned)
-
-
-def generate_json(prompt, system=None, temperature=0.4):
-    """Returns parsed JSON (dict or list). Raises AIError if the reply is not valid JSON."""
-    text, _model = generate_text(prompt, system, temperature, json_mode=True)
     try:
-        return parse_json(text)
-    except json.JSONDecodeError:
-        raise AIError("The AI returned an invalid JSON response. Please try again.")
-
-
-def list_models():
-    """Names of Gemini models this API key can see (for troubleshooting)."""
-    client = _client()
-    try:
-        names = [m.name.replace("models/", "") for m in client.models.list()]
-    except Exception as e:          # noqa: BLE001
-        raise AIError(_friendly(str(e)))
-    return sorted(n for n in names if n.startswith("gemini"))
