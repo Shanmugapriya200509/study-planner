@@ -6,6 +6,7 @@ import streamlit as st
 
 import database as db
 import progress as prog
+import syllabus
 
 st.set_page_config(page_title="AI Study Planner", page_icon="📚", layout="wide")
 db.init_db()
@@ -156,7 +157,7 @@ def main():
     elif page == "Profile":
         page_profile(user)
     elif page == "Syllabus":
-        page_placeholder("📖 Syllabus Management", "the next step")
+        syllabus.render(user)
     elif page == "Study Goal":
         page_placeholder("🎯 Study Goal Setup", "a later step")
     elif page == "Study Plan":
