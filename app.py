@@ -1,13 +1,14 @@
 """
-app.py - Streamlit entry point: login/register, dashboard, profile.
-Other pages are placeholders until later steps.
+app.py - Streamlit entry point and page routing.
 """
 import streamlit as st
 
+import ai_service as ai
 import database as db
+import learn
+import planner
 import progress as prog
 import syllabus
-import planner
 
 st.set_page_config(page_title="AI Study Planner", page_icon="📚", layout="wide")
 db.init_db()
@@ -126,6 +127,38 @@ def page_profile(user):
         st.rerun()
 
 
+# ---------------------------------------------------------------- AI connection test
+def page_ai_test():
+    st.header("🔌 AI Connection Test")
+    st.write("This page checks that the app can reach the Gemini API. "
+             "The key itself is never displayed.")
+
+    if ai.has_api_key():
+        st.success("API key found in Secrets.")
+    else:
+        st.error("API key NOT found. In Streamlit Cloud open your app, then "
+                 "**⋮ → Settings → Secrets**, add  GEMINI_API_KEY = \"your-key\"  and Save.")
+        return
+
+    prompt = st.text_input("Ask the AI", value="Explain the OSI model in simple words.")
+    if st.button("Ask Gemini", type="primary"):
+        with st.spinner("Asking Gemini..."):
+            try:
+                text, model = ai.generate_text(prompt)
+                st.success(f"Response received (model used: {model})")
+                st.write(text)
+            except ai.AIError as e:
+                st.error(str(e))
+
+    st.divider()
+    st.caption("If the question above fails with a model error, list the models your key can use:")
+    if st.button("List models available to my key"):
+        try:
+            st.write(ai.list_models())
+        except ai.AIError as e:
+            st.error(str(e))
+
+
 def page_placeholder(title, coming_in):
     st.header(title)
     st.info(f"This page will be built in {coming_in}.")
@@ -147,7 +180,7 @@ def main():
     page = st.sidebar.radio(
         "Navigate",
         ["Dashboard", "Syllabus", "Study Goal", "Study Plan",
-         "Learn a Topic", "Quiz", "Profile"],
+         "Learn a Topic", "Quiz", "Profile", "AI Test"],
     )
     if st.sidebar.button("Logout"):
         del st.session_state["user_id"]
@@ -164,9 +197,11 @@ def main():
     elif page == "Study Plan":
         planner.render_plan(user)
     elif page == "Learn a Topic":
-        page_placeholder("🧠 AI Topic Explanation", "Day 2")
+        learn.render(user)
     elif page == "Quiz":
-        page_placeholder("📝 Quiz", "Day 2")
+        page_placeholder("📝 Quiz", "the next step")
+    elif page == "AI Test":
+        page_ai_test()
 
 
 main()
