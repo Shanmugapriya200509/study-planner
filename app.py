@@ -162,7 +162,7 @@ def main():
     elif page == "Study Goal":
         planner.render_goal(user)
     elif page == "Study Plan":
-        page_placeholder("🗓️ AI Study Plan", "a later step")
+        planner.render_plan(user)
     elif page == "Learn a Topic":
         page_placeholder("🧠 AI Topic Explanation", "Day 2")
     elif page == "Quiz":
