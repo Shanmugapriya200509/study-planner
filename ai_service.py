@@ -6,11 +6,13 @@ never from the source code.
 import json
 import os
 import re
+import time
 
 import streamlit as st
 
 # Tried in this order. You can force a model by adding GEMINI_MODEL = "..." to Secrets.
 DEFAULT_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"]
+ATTEMPTS_PER_MODEL = 2      # one retry when the server is temporarily busy
 
 
 class AIError(Exception):
@@ -57,15 +59,34 @@ def _client():
     return genai.Client(api_key=key)
 
 
+# ---------------------------------------------------------------- error classification
+def _is_missing(low):
+    return ("not found" in low or "404" in low or "no longer available" in low
+            or "not supported" in low)
+
+
+def _is_quota(low):
+    return "429" in low or "quota" in low or "resource_exhausted" in low
+
+
+def _is_transient(low):
+    return ("503" in low or "502" in low or "504" in low or "unavailable" in low
+            or "overloaded" in low or "high demand" in low
+            or "deadline_exceeded" in low or "timed out" in low or "timeout" in low)
+
+
 def _friendly(message):
     low = message.lower()
     if "api key not valid" in low or "api_key_invalid" in low or "invalid api key" in low:
         return "The API key is not valid. Create a new key in Google AI Studio and update Secrets."
-    if "429" in low or "quota" in low or "resource_exhausted" in low or "rate" in low:
+    if _is_transient(low):
+        return ("Gemini is busy right now (temporary high demand on Google's servers). "
+                "Wait about 30 seconds and click the button again.")
+    if _is_quota(low):
         return "Rate or daily limit reached on the free tier. Wait a minute and try again."
     if "403" in low or "permission" in low:
         return "This API key does not have permission for that model. Try the model list button."
-    if "not found" in low or "404" in low:
+    if _is_missing(low):
         return ("None of the configured models are available for this key. Use 'List models' "
                 "and set GEMINI_MODEL in Secrets to one of them.")
     return "AI request failed: " + message[:300]
@@ -73,7 +94,10 @@ def _friendly(message):
 
 # ---------------------------------------------------------------- calls
 def generate_text(prompt, system=None, temperature=0.5, json_mode=False):
-    """Returns (text, model_used). Falls back to the next model if one is unavailable."""
+    """Returns (text, model_used).
+    Busy server  -> retry once, then try the next model.
+    Quota / model not found -> try the next model.
+    Bad key / permission -> stop immediately."""
     from google.genai import types
 
     client = _client()
@@ -84,21 +108,30 @@ def generate_text(prompt, system=None, temperature=0.5, json_mode=False):
     )
 
     last_error = "No response received."
+    fatal = False
     for model in _model_candidates():
-        try:
-            response = client.models.generate_content(
-                model=model, contents=prompt, config=config)
-            text = response.text
-            if text:
-                return text, model
-            last_error = "The AI returned an empty response."
-        except Exception as e:      # noqa: BLE001 - we convert every failure to AIError
-            last_error = str(e)
-            low = last_error.lower()
-            if ("not found" in low or "404" in low or "no longer available" in low
-                    or "not supported" in low):
-                continue            # try the next model
-            break                   # key / quota / network problem: retrying other models won't help
+        for attempt in range(ATTEMPTS_PER_MODEL):
+            try:
+                response = client.models.generate_content(
+                    model=model, contents=prompt, config=config)
+                text = response.text
+                if text:
+                    return text, model
+                last_error = "The AI returned an empty response."
+            except Exception as e:      # noqa: BLE001 - every failure becomes AIError below
+                last_error = str(e)
+                low = last_error.lower()
+                if _is_missing(low) or _is_quota(low):
+                    break               # this model will not work: try the next one
+                if _is_transient(low):
+                    if attempt < ATTEMPTS_PER_MODEL - 1:
+                        time.sleep(2 * (attempt + 1))
+                        continue        # retry the same model once
+                    break               # still busy: try the next model
+                fatal = True            # key / permission / unknown problem
+                break
+        if fatal:
+            break
     raise AIError(_friendly(last_error))
 
 
