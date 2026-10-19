@@ -8,6 +8,7 @@ import database as db
 import learn
 import planner
 import progress as prog
+import quiz
 import syllabus
 
 st.set_page_config(page_title="AI Study Planner", page_icon="📚", layout="wide")
@@ -199,7 +200,7 @@ def main():
     elif page == "Learn a Topic":
         learn.render(user)
     elif page == "Quiz":
-        page_placeholder("📝 Quiz", "the next step")
+        quiz.render(user)
     elif page == "AI Test":
         page_ai_test()
 
