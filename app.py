@@ -11,6 +11,7 @@ import progress as prog
 import quiz
 import syllabus
 import adaptive
+import dashboard
 
 st.set_page_config(page_title="AI Study Planner", page_icon="📚", layout="wide")
 db.init_db()
@@ -189,7 +190,7 @@ def main():
         st.rerun()
 
     if page == "Dashboard":
-        page_dashboard(user)
+        dashboard.render(user)
     elif page == "Profile":
         page_profile(user)
     elif page == "Syllabus":
