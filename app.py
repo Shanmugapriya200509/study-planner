@@ -29,8 +29,9 @@ DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 # ---------------------------------------------------------------- login / register
 def auth_screen():
-    st.title("📚 AI-Powered Personalized Study Planner")
-    st.caption("Plan. Study. Test. Adapt. Track.")
+        st.title("📚 My Planner AI")
+    st.caption("An AI-powered personalized study planner: adaptive study plans, topic "
+               "explanations, quizzes and progress tracking.")
 
     tab_login, tab_register = st.tabs(["Login", "Register"])
 
@@ -185,7 +186,7 @@ def main():
         del st.session_state["user_id"]
         st.rerun()
 
-    st.sidebar.title("📚 Study Planner")
+    st.sidebar.title("📚 My Planner AI ")
     st.sidebar.write(f"Signed in as **{user['name']}**")
     page = st.sidebar.radio(
         "Navigate",
