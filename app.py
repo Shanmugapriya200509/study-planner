@@ -13,7 +13,14 @@ import syllabus
 import adaptive
 import dashboard
 
-st.set_page_config(page_title="AI Study Planner", page_icon="📚", layout="wide")
+st.set_page_config(
+    page_title="My Planner AI | AI-Powered Personalized Study Planner",
+    page_icon="📚",
+    layout="wide",
+    menu_items={"About": "My Planner AI is an AI-powered personalized study planner. "
+                         "It builds adaptive study plans, explains topics, generates quizzes "
+                         "and tracks your progress."},
+)
 db.init_db()
 
 LEVELS = ["School", "Diploma", "Undergraduate", "Postgraduate"]
