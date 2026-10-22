@@ -1,37 +1,42 @@
 """
-app.py - Streamlit entry point and page routing.
+app.py - Streamlit entry point and page routing for My Planner AI.
 """
 import streamlit as st
 
+import adaptive
 import ai_service as ai
+import dashboard
 import database as db
 import learn
 import planner
-import progress as prog
 import quiz
 import syllabus
-import adaptive
-import dashboard
 
 st.set_page_config(
     page_title="My Planner AI | AI-Powered Personalized Study Planner",
     page_icon="📚",
     layout="wide",
     menu_items={"About": "My Planner AI is an AI-powered personalized study planner. "
-                         "It builds adaptive study plans, explains topics, generates quizzes "
-                         "and tracks your progress."},
+                         "Upload your syllabus to get an adaptive study plan, topic explanations, "
+                         "quizzes and progress tracking."},
 )
 db.init_db()
 
 LEVELS = ["School", "Diploma", "Undergraduate", "Postgraduate"]
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+PAGES = ["Dashboard", "Syllabus", "Study Goal", "Study Plan", "Adaptive Plan",
+         "Learn a Topic", "Quiz", "Profile", "AI Test"]
+PAGES_NEED_SYLLABUS = {"Dashboard", "Study Goal", "Study Plan", "Adaptive Plan",
+                       "Learn a Topic", "Quiz"}
+NO_SYLLABUS_MESSAGE = ("Please upload your syllabus first to generate your personalized "
+                       "study plan and notes.")
 
 
 # ---------------------------------------------------------------- login / register
 def auth_screen():
-        st.title("📚 My Planner AI")
-    st.caption("An AI-powered personalized study planner: adaptive study plans, topic "
-               "explanations, quizzes and progress tracking.")
+    st.title("📚 My Planner AI")
+    st.caption("An AI-powered personalized study planner: upload your syllabus to get an adaptive "
+               "study plan, topic explanations, quizzes and progress tracking.")
 
     tab_login, tab_register = st.tabs(["Login", "Register"])
 
@@ -43,6 +48,7 @@ def auth_screen():
         if submitted:
             user = db.authenticate(username, password)
             if user:
+                st.session_state.clear()
                 st.session_state["user_id"] = user["id"]
                 st.rerun()
             else:
@@ -65,33 +71,11 @@ def auth_screen():
             else:
                 try:
                     uid = db.create_user(name, new_username, new_password, level, hours, days)
+                    st.session_state.clear()
                     st.session_state["user_id"] = uid
                     st.rerun()
                 except ValueError as e:
                     st.error(str(e))
-
-
-# ---------------------------------------------------------------- dashboard
-def page_dashboard(user):
-    st.header(f"📊 Dashboard - {user['name']}")
-    s = prog.get_summary(user["id"])
-
-    if s["total_topics"] == 0:
-        st.info("Your syllabus is empty. Go to **Profile** and click "
-                "**Load demo syllabus** to try the app.")
-
-    st.write(f"**Overall syllabus completion: {s['completion_pct']:.0f}%**")
-    st.progress(min(s["completion_pct"] / 100, 1.0))
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Topics completed", f"{s['done_topics']} / {s['total_topics']}")
-    c2.metric("Units completed", f"{s['done_units']} / {s['total_units']}")
-    c3.metric("Days remaining",
-              s["days_remaining"] if s["days_remaining"] is not None else "Not set")
-    c4.metric("Average quiz score",
-              f"{s['avg_quiz_pct']:.0f}%" if s["avg_quiz_pct"] is not None else "No quiz yet")
-
-    st.caption("Charts, weak/strong topics and weekly targets will be added in later steps.")
 
 
 # ---------------------------------------------------------------- profile
@@ -118,22 +102,22 @@ def page_profile(user):
             st.rerun()
 
     st.divider()
-    st.subheader("Syllabus data")
+    st.subheader("Your syllabus")
     counts = db.count_syllabus(user["id"])
     c1, c2, c3 = st.columns(3)
     c1.metric("Subjects", counts["subjects"])
     c2.metric("Units", counts["units"])
     c3.metric("Topics", counts["topics"])
 
-    st.write("Load the demo **Computer Networks** syllabus (5 units, 24 topics). "
-             "This replaces your current syllabus.")
-    b1, b2 = st.columns(2)
-    if b1.button("Load demo syllabus", type="primary"):
-        db.seed_demo_syllabus(user["id"])
-        st.success("Demo syllabus loaded.")
-        st.rerun()
-    if b2.button("Clear my syllabus"):
+    doc = db.get_syllabus_document(user["id"])
+    if doc:
+        st.write(f"Source file: **{doc['filename']}** ({doc['file_type'].upper()}), "
+                 f"uploaded {doc['uploaded_at']} UTC.")
+    if counts["topics"] == 0:
+        st.info("No syllabus yet. Open the **Syllabus** page to upload one.")
+    elif st.button("Clear my syllabus"):
         db.clear_syllabus(user["id"])
+        syllabus.clear_stale_state()
         st.warning("Syllabus cleared.")
         st.rerun()
 
@@ -170,12 +154,11 @@ def page_ai_test():
             st.error(str(e))
 
 
-def page_placeholder(title, coming_in):
-    st.header(title)
-    st.info(f"This page will be built in {coming_in}.")
-
-
 # ---------------------------------------------------------------- main
+def _go_to_syllabus():
+    st.session_state["nav_page"] = "Syllabus"
+
+
 def main():
     if "user_id" not in st.session_state:
         auth_screen()
@@ -183,24 +166,24 @@ def main():
 
     user = db.get_user(st.session_state["user_id"])
     if user is None:  # database was reset (normal on Streamlit Cloud after a restart)
-        del st.session_state["user_id"]
+        st.session_state.clear()
         st.rerun()
 
-    st.sidebar.title("📚 My Planner AI ")
+    st.sidebar.title("📚 My Planner AI")
     st.sidebar.write(f"Signed in as **{user['name']}**")
-    page = st.sidebar.radio(
-        "Navigate",
-        ["Dashboard", "Syllabus", "Study Goal", "Study Plan", "Adaptive Plan",
-         "Learn a Topic", "Quiz", "Profile", "AI Test"],
-    )
+    page = st.sidebar.radio("Navigate", PAGES, key="nav_page")
     if st.sidebar.button("Logout"):
-        del st.session_state["user_id"]
+        st.session_state.clear()      # forget everything that belongs to this user
         st.rerun()
+
+    if page in PAGES_NEED_SYLLABUS and db.count_syllabus(user["id"])["topics"] == 0:
+        st.header(page)
+        st.warning(NO_SYLLABUS_MESSAGE)
+        st.button("Go to the Syllabus page", type="primary", on_click=_go_to_syllabus)
+        return
 
     if page == "Dashboard":
         dashboard.render(user)
-    elif page == "Profile":
-        page_profile(user)
     elif page == "Syllabus":
         syllabus.render(user)
     elif page == "Study Goal":
@@ -213,6 +196,8 @@ def main():
         learn.render(user)
     elif page == "Quiz":
         quiz.render(user)
+    elif page == "Profile":
+        page_profile(user)
     elif page == "AI Test":
         page_ai_test()
 
