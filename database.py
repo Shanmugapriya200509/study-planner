@@ -1,8 +1,11 @@
 """
 database.py - SQLite tables and data-access functions.
 Only database operations here; no AI and no screen code.
+There is NO default or sample syllabus: syllabus data exists only after a user uploads
+a file (or adds topics by hand), and every query is limited to the logged-in user.
 """
 import hashlib
+import json
 import secrets
 import sqlite3
 from contextlib import contextmanager
@@ -140,46 +143,26 @@ CREATE TABLE IF NOT EXISTS progress (
     avg_quiz_pct REAL,
     study_minutes INTEGER
 );
-"""
 
-# (topic name, difficulty, estimated minutes)
-DEMO_SUBJECT = "Computer Networks"
-DEMO_SYLLABUS = {
-    "Unit 1: Network Models and Fundamentals": [
-        ("Network Types and Topologies", "Easy", 45),
-        ("OSI Model", "Medium", 60),
-        ("TCP/IP Model", "Medium", 60),
-        ("Protocols and Standards", "Easy", 45),
-    ],
-    "Unit 2: Data Link Layer": [
-        ("Framing", "Easy", 45),
-        ("Error Detection", "Hard", 75),
-        ("Error Correction", "Hard", 75),
-        ("Flow Control", "Medium", 60),
-        ("Multiple Access Protocols", "Hard", 75),
-    ],
-    "Unit 3: Network Layer": [
-        ("IPv4 Addressing", "Medium", 60),
-        ("Subnetting and CIDR", "Hard", 90),
-        ("Routing Algorithms", "Hard", 75),
-        ("Routing Protocols (RIP, OSPF)", "Hard", 75),
-        ("IPv6 and ICMP", "Medium", 60),
-    ],
-    "Unit 4: Transport Layer": [
-        ("UDP", "Easy", 45),
-        ("TCP Connection Management", "Medium", 60),
-        ("TCP Flow Control", "Medium", 60),
-        ("Congestion Control", "Hard", 75),
-        ("Sockets", "Easy", 45),
-    ],
-    "Unit 5: Application Layer and Security": [
-        ("DNS", "Medium", 60),
-        ("HTTP and HTTPS", "Easy", 45),
-        ("Email Protocols (SMTP, POP3, IMAP)", "Easy", 45),
-        ("DHCP", "Easy", 45),
-        ("Network Security Basics", "Medium", 60),
-    ],
-}
+CREATE TABLE IF NOT EXISTS syllabus_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    file_type TEXT NOT NULL,
+    char_count INTEGER DEFAULT 0,
+    raw_text TEXT NOT NULL,
+    method TEXT,
+    uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS topic_details (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id INTEGER NOT NULL UNIQUE REFERENCES topics(id) ON DELETE CASCADE,
+    document_id INTEGER REFERENCES syllabus_documents(id) ON DELETE SET NULL,
+    subtopics TEXT DEFAULT '[]',
+    source_excerpt TEXT DEFAULT ''
+);
+"""
 
 
 @contextmanager
@@ -260,33 +243,111 @@ def update_profile(user_id, name, academic_level, preferred_hours, preferred_day
 
 # ---------------------------------------------------------------- syllabus
 def clear_syllabus(user_id):
-    """Delete all subjects (units, topics, sessions, quizzes cascade) and plans."""
+    """Delete this user's syllabus (units, topics, sessions, quizzes cascade), plans and
+    uploaded documents."""
     with get_conn() as conn:
-        conn.execute("DELETE FROM subjects WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM study_plans WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM subjects WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM syllabus_documents WHERE user_id = ?", (user_id,))
 
 
-def seed_demo_syllabus(user_id):
-    """Replace the user's syllabus with the demo Computer Networks syllabus."""
-    clear_syllabus(user_id)
+def save_uploaded_syllabus(user_id, filename, file_type, text, method, structure):
+    """Replace the user's syllabus with the structure read from an uploaded file.
+    structure = {"subjects": [{"name", "units": [{"name", "topics": [{"name", "subtopics", "excerpt"}]}]}]}
+    Difficulty and study minutes are not in a syllabus file, so topics start as Medium / 60 min
+    and the student can change them on the Syllabus page."""
     with get_conn() as conn:
+        conn.execute("DELETE FROM study_plans WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM subjects WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM syllabus_documents WHERE user_id = ?", (user_id,))
         cur = conn.execute(
-            "INSERT INTO subjects (user_id, name, priority) VALUES (?, ?, 1)",
-            (user_id, DEMO_SUBJECT),
-        )
-        subject_id = cur.lastrowid
-        for u_order, (unit_name, topics) in enumerate(DEMO_SYLLABUS.items(), start=1):
-            cur = conn.execute(
-                "INSERT INTO units (subject_id, name, unit_order) VALUES (?, ?, ?)",
-                (subject_id, unit_name, u_order),
-            )
-            unit_id = cur.lastrowid
-            for t_order, (t_name, diff, minutes) in enumerate(topics, start=1):
-                conn.execute(
-                    """INSERT INTO topics (unit_id, name, topic_order, difficulty, est_minutes)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (unit_id, t_name, t_order, diff, minutes),
-                )
+            """INSERT INTO syllabus_documents (user_id, filename, file_type, char_count, raw_text, method)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (user_id, filename, file_type, len(text), text, method))
+        doc_id = cur.lastrowid
+        for s in structure["subjects"]:
+            cur = conn.execute("INSERT INTO subjects (user_id, name, priority) VALUES (?, ?, 2)",
+                               (user_id, s["name"]))
+            subject_id = cur.lastrowid
+            for u_order, u in enumerate(s["units"], start=1):
+                cur = conn.execute(
+                    "INSERT INTO units (subject_id, name, unit_order) VALUES (?, ?, ?)",
+                    (subject_id, u["name"], u_order))
+                unit_id = cur.lastrowid
+                for t_order, t in enumerate(u["topics"], start=1):
+                    cur = conn.execute(
+                        "INSERT INTO topics (unit_id, name, topic_order) VALUES (?, ?, ?)",
+                        (unit_id, t["name"], t_order))
+                    conn.execute(
+                        """INSERT INTO topic_details (topic_id, document_id, subtopics, source_excerpt)
+                           VALUES (?, ?, ?, ?)""",
+                        (cur.lastrowid, doc_id,
+                         json.dumps(t.get("subtopics", []), ensure_ascii=False),
+                         t.get("excerpt", "")))
+    return doc_id
+
+
+def get_syllabus_document(user_id):
+    """The most recent uploaded file of this user (without its full text), or None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT id, filename, file_type, char_count, method, uploaded_at
+               FROM syllabus_documents WHERE user_id = ? ORDER BY id DESC LIMIT 1""",
+            (user_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_topic_detail(user_id, topic_id):
+    """Subtopics and the file excerpt for one topic, only if the topic belongs to this user."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT td.subtopics, td.source_excerpt, sd.filename
+               FROM topic_details td
+               JOIN topics t ON td.topic_id = t.id
+               JOIN units u ON t.unit_id = u.id
+               JOIN subjects s ON u.subject_id = s.id
+               LEFT JOIN syllabus_documents sd ON td.document_id = sd.id
+               WHERE td.topic_id = ? AND s.user_id = ?""", (topic_id, user_id)).fetchone()
+    if row is None:
+        return None
+    try:
+        subtopics = json.loads(row["subtopics"] or "[]")
+    except ValueError:
+        subtopics = []
+    return {"subtopics": subtopics, "excerpt": row["source_excerpt"] or "",
+            "filename": row["filename"]}
+
+
+def get_topic_details_map(user_id):
+    """{topic_id: [subtopics]} for all of this user's topics that have subtopics."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT td.topic_id, td.subtopics
+               FROM topic_details td
+               JOIN topics t ON td.topic_id = t.id
+               JOIN units u ON t.unit_id = u.id
+               JOIN subjects s ON u.subject_id = s.id
+               WHERE s.user_id = ?""", (user_id,)).fetchall()
+    out = {}
+    for r in rows:
+        try:
+            items = json.loads(r["subtopics"] or "[]")
+        except ValueError:
+            items = []
+        if items:
+            out[r["topic_id"]] = items
+    return out
+
+
+def update_topic_settings(user_id, topic_id, difficulty, minutes):
+    """Change difficulty and estimated study minutes of one of this user's topics."""
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE topics SET difficulty = ?, est_minutes = ?
+               WHERE id = ? AND unit_id IN (
+                   SELECT u.id FROM units u JOIN subjects s ON u.subject_id = s.id
+                   WHERE s.user_id = ?)""",
+            (difficulty, int(minutes), topic_id, user_id))
 
 
 def count_syllabus(user_id):
