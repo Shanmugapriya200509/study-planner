@@ -156,7 +156,13 @@ UNIT_RE = re.compile(
     re.I)
 STOP_RE = re.compile(
     r"^\s*(text\s*books?|references?|suggested reading|course outcomes?|outcomes?|total\b|"
+    r"lecture\s+periods|tutorial\s+periods|practical\s+periods|"
     r"evaluation|assessment|web resources|e-resources)", re.I)
+NOISE_RE = re.compile(r"^\s*(?:CO\s?\d+[\s,]*)+$", re.I)                      # lines like 'CO1' or 'CO2 CO3'
+PERIODS_RE = re.compile(r"^\s*(?:periods?|hours?|hrs?)\s*[:\-]?\s*\d+\s*$", re.I)
+PERIODS_TAIL_RE = re.compile(r"\s*\b(?:periods?|hours?|hrs?)\s*[:\-]?\s*\d+\s*$", re.I)
+DASH_SPLIT_RE = re.compile(r"\s+[-–—]\s*|\s*[-–—]\s+")                 # ' - ' 'search- ' ' –Causal' (not 'Mini-max')
+CODE_RE = re.compile(r"^[A-Z]{2,5}\s?\d{2,4}[A-Z]?$")                      # a course code such as CS225
 HOURS_RE = re.compile(
     r"[\(\[]?\s*\d+\s*(?:hours?|hrs?|periods?|lectures?)\s*[\)\]]?", re.I)
 BULLET_RE = re.compile(r"^\s*(?:[-–—•*·●▪■□]|\(?\d{1,2}[.)]|\(?[a-z][.)])\s+")
@@ -176,30 +182,65 @@ def _guess_subject(text):
         m = re.match(r"^\s*syllabus\s+(?:for|of)\s*[:\-–]?\s*(.+)$", line, re.I)
         if m:
             return m.group(1).strip(" .")[:80]
+    lines = [ln.strip() for ln in text.split("\n")[:80]]
+    for i, ln in enumerate(lines[:-1]):
+        nxt = lines[i + 1]
+        if CODE_RE.match(ln) and len(nxt) >= 4 and re.search(r"[A-Za-z]{3}", nxt) and not nxt.isdigit():
+            return nxt[:80]
     return ""
+
+
+def _clean_title(title):
+    title = HOURS_RE.sub("", title)
+    title = PERIODS_TAIL_RE.sub("", title)
+    return title.strip(" :.-–—|")
+
+
+def _topics_from_text(text, seen, topics):
+    """Split one paragraph into topics. Separators: ';', ',' and ' - ' (a dash with a space).
+    'Name: a, b, c' becomes a topic with subtopics."""
+    def add(name, subs=()):
+        name = name.strip(" .:-,;")[:120]
+        if len(name) < 3 or _norm(name) in seen:
+            return
+        seen.add(_norm(name))
+        topics.append({"name": name, "subtopics": [s[:120] for s in subs][:12]})
+
+    for segment in DASH_SPLIT_RE.split(text):
+        for piece in _split_top(segment, ";"):
+            if ":" in piece:
+                head, tail = piece.split(":", 1)
+                heads, items = _split_top(head, ","), _split_top(tail, ",;")
+                if heads and items:
+                    for h in heads[:-1]:
+                        add(h)
+                    add(heads[-1], items)
+                    continue
+            for part in _split_top(piece, ","):
+                add(part)
+
+
+def _join_wrapped(lines):
+    """Join lines that were only wrapped by the page layout into one paragraph."""
+    longest = max((len(x) for x in lines), default=0)
+    out = []
+    for ln in lines:
+        if out and not BULLET_RE.match(ln):
+            prev = out[-1]
+            wrapped = (len(prev) >= max(50, int(longest * 0.85)) and prev[-1] not in ".;:?!")
+            if ln[:1].islower() or prev.endswith((",", ":")) or wrapped:
+                out[-1] = prev + " " + ln
+                continue
+        out.append(ln)
+    return out
 
 
 def _topics_from_lines(lines):
     topics, seen = [], set()
-    for line in lines:
-        line = BULLET_RE.sub("", HOURS_RE.sub("", line)).strip(" |")
-        if len(line) < 3:
-            continue
-        pieces = _split_top(line, ";")
-        if ":" not in line and (len(line) > 60 or line.count(",") >= 2):
-            pieces = _split_top(line, ";,")
-        for piece in pieces:
-            subtopics = []
-            if ":" in piece:
-                head, tail = piece.split(":", 1)
-                items = _split_top(tail, ",;")
-                if head.strip() and items:
-                    piece, subtopics = head.strip(), items
-            name = piece.strip(" .:-")[:120]
-            if len(name) < 3 or _norm(name) in seen:
-                continue
-            seen.add(_norm(name))
-            topics.append({"name": name, "subtopics": [s[:120] for s in subtopics[:12]]})
+    for paragraph in _join_wrapped(lines):
+        paragraph = BULLET_RE.sub("", HOURS_RE.sub("", paragraph)).strip(" |")
+        if len(paragraph) >= 3:
+            _topics_from_text(paragraph, seen, topics)
     return topics
 
 
@@ -207,16 +248,11 @@ def parse_with_rules(text, filename=""):
     """Simple parser for syllabi written as 'Unit 1 / Module 2 / Chapter 3' headings followed
     by topics. Only text that is really in the file is used. Returns a structure dict."""
     units, cur_title, body = [], None, []
+    state = {"need_title": False}
 
     def close():
         if cur_title is not None:
-            merged = []
-            for ln in body:                       # join lines that were wrapped by the PDF/Word layout
-                if merged and (ln[:1].islower() or merged[-1].endswith(",")):
-                    merged[-1] += " " + ln
-                else:
-                    merged.append(ln)
-            topics = _topics_from_lines(merged)
+            topics = _topics_from_lines(body)
             if topics:
                 units.append({"name": cur_title, "topics": topics})
 
@@ -229,16 +265,23 @@ def parse_with_rules(text, filename=""):
         if m:
             close()
             label = _unit_label(m.group(1))
-            title = HOURS_RE.sub("", m.group(2)).strip(" :.-–—|")
+            title = _clean_title(m.group(2))
             cur_title = f"{label}: {title}" if title else label
             body, collecting = [], True
+            state["need_title"] = not title          # the title may be on the next line
             continue
         if STOP_RE.match(line):
             close()
             cur_title, body, collecting = None, [], False
             continue
-        if collecting:
-            body.append(line)
+        if not collecting or NOISE_RE.match(line) or PERIODS_RE.match(line):
+            continue
+        if state["need_title"] and not body and len(line) <= 100 and " - " not in line:
+            cur_title = f"{cur_title}: {_clean_title(line)}"
+            state["need_title"] = False
+            continue
+        state["need_title"] = False
+        body.append(line)
     close()
 
     subject = _guess_subject(text) or _stem(filename)
