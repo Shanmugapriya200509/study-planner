@@ -49,9 +49,12 @@ def _read_pdf(data):
         pages = [(p.extract_text() or "") for p in reader.pages]
     except SyllabusError:
         raise
-    except Exception:
-        raise SyllabusError("This PDF could not be read. It may be damaged. Please upload a valid "
-                            "PDF, DOCX or TXT file.")
+    except ImportError:
+        raise SyllabusError("The PDF reader (the 'pypdf' package) is not installed on the server. "
+                            "Add the line pypdf to requirements.txt on GitHub, then reboot the app.")
+    except Exception as e:
+        raise SyllabusError(f"This PDF could not be read ({type(e).__name__}). It may be damaged. "
+                            "Please upload a valid PDF, DOCX or TXT file.")
     return "\n".join(pages), len(pages)
 
 
@@ -74,9 +77,14 @@ def _read_docx(data):
                         if t and (not cells or cells[-1] != t):   # merged cells repeat their text
                             cells.append(t)
                     lines.append(" | ".join(cells))
-    except Exception:
-        raise SyllabusError("This DOCX file could not be read. It may be damaged, or it may be an "
-                            "old .doc file. Save it as .docx and upload it again.")
+    except ImportError:
+        raise SyllabusError("The DOCX reader (the 'python-docx' package) is not installed on the "
+                            "server. Add the line python-docx to requirements.txt on GitHub, then "
+                            "reboot the app.")
+    except Exception as e:
+        raise SyllabusError(f"This DOCX file could not be read ({type(e).__name__}). It may be "
+                            "damaged, or it may be an old .doc file. Save it as .docx and upload "
+                            "it again.")
     return "\n".join(lines), None
 
 
